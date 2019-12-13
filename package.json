@@ -4,7 +4,7 @@
   "description": "QQ anti-spam bot, based on IOTQQ & baidu AIP text censor",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js | node_modules\\.bin\\bunyan"
   },
   "repository": {
     "type": "git",
@@ -23,6 +23,7 @@
   "homepage": "https://github.com/rockswang/qqcensorbot#readme",
   "dependencies": {
     "baidu-aip-sdk": "^2.4.4",
+    "bunyan": "^1.8.12",
     "request": "^2.88.0",
     "request-promise": "^4.2.5",
     "socket.io-client": "^2.3.0"
