@@ -37,15 +37,18 @@ let WS_API // IOTQQ Websocket接入点
 let LOGIN_QQ // 登录QQ号，即机器人QQ号
 let REPORT_QQ // 报告QQ号，撤回消息通知此QQ
 
+// 私聊支持的配置指令，val: 默认值, type: 类型, get: 保存值->显示值, set: 输入值->保存值
 const COMMAND = {
-  whitelist: { d: [], n: '白名单 QQ号', g: v => Array.from(v) + '', s: (s, v) => s.whitelist.has(~~v) ? s.whitelist.delete(~~v) : s.whitelist.add(~~v) }, // QQ号白名单
-  revoke: { d: true, n: '执行撤回 开/关', g: v => v ? '开' : '关', s: (s, v) => { s.revoke = v === '开' } }, // 是否执行撤回，否则只报告
-  censorAll: { d: false, n: '审查所有 开/关', g: v => v ? '开' : '关', s: (s, v) => { s.censorAll = v === '开' } }, // 是否处理非广告推广类消息
-  moreSensitive: { d: false, n: '处理疑似 开/关', g: v => v ? '开' : '关', s: (s, v) => { s.moreSensitive = v === '开' } }, // 是否处理疑似信息
-  minLength: { d: 8, n: '文本长度 数字', g: v => v, s: (s, v) => { s.minLength = ~~v } } // 启动审查的最少字符数
+  白名单: { val: [], type: 'QQ号', get: v => Array.from(v) + '', set: (s, v) => s['白名单'].has(~~v) ? s['白名单'].delete(~~v) : s['白名单'].add(~~v) }, // QQ号白名单
+  执行撤回: { val: true, type: '开/关', get: v => v ? '开' : '关', set: (s, v) => { s['执行撤回'] = v === '开' } }, // 是否执行撤回，否则只报告
+  审查所有: { val: false, type: '开/关', get: v => v ? '开' : '关', set: (s, v) => { s['审查所有'] = v === '开' } }, // 是否处理非广告推广类消息
+  处理疑似: { val: false, type: '开/关', get: v => v ? '开' : '关', set: (s, v) => { s['处理疑似'] = v === '开' } }, // 是否处理疑似信息
+  文本长度: { val: 8, type: '数字', get: v => v, set: (s, v) => { s['文本长度'] = ~~v } } // 启动审查的最少字符数
 }
-const settings = Object.entries(COMMAND).reduce((o, [k, v]) => (o[k] = v.d, o), {})
-const HELP = `命令列表：\n${Object.values(COMMAND).map(v => v.n).join('\n')}`
+// 配置初始值（默认值）
+const settings = Object.entries(COMMAND).reduce((o, [k, v]) => (o[k] = v.val, o), {})
+// 帮助信息（收到不可识别的指令）
+const HELP = `命令列表：\n${Object.entries(COMMAND).map(([k, v]) => k + ' ' + v.type).join('\n')}`
 
 async function main () {
   // 如给定配置文件路径，则读取之，否则读取index.js同路径下的config.json
@@ -62,11 +65,11 @@ async function main () {
 
   const settingsPath = path.join(__dirname, 'settings.json')
   try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsPath, 'utf8'))) } catch (err) {}
-  settings.whitelist = new Set(settings.whitelist)
-  settings.whitelist.add(REPORT_QQ).add(LOGIN_QQ)
+  settings['白名单'] = new Set(settings['白名单'])
+  settings['白名单'].add(REPORT_QQ).add(LOGIN_QQ)
   const saveSettings = () => {
     const o = Object.assign({}, settings)
-    o.whitelist = Array.from(o.whitelist)
+    o['白名单'] = Array.from(o['白名单'])
     fs.writeFileSync(settingsPath, JSON.stringify(o, null, 2), 'utf8')
   }
 
@@ -84,11 +87,11 @@ async function main () {
     log.debug({ data }, '收到群消息')
     const { FromGroupId, FromGroupName, FromUserId, FromNickName, Content, MsgType, MsgSeq, MsgRandom } = data.CurrentPacket.Data
     if (MsgType !== 'TextMsg') return
-    if (Content.length < settings.minLength) return log.debug('内容过短不审查')
-    if (settings.whitelist.has(~~FromUserId)) return log.debug('白名单用户不审查')
+    if (Content.length < settings['文本长度']) return log.debug('内容过短不审查')
+    if (settings['白名单'].has(~~FromUserId)) return log.debug('白名单用户不审查')
     const result = await textCensor(Content)
     if (result.conclusion !== '合规') { // '合规', '疑似', '不合规'
-      const revoke = settings.revoke && (result.conclusion === '不合规' || (result.conclusion === '疑似' && settings.moreSensitive)) && (settings.censorAll || /恶意推广/.test(result.msg))
+      const revoke = settings['执行撤回'] && (result.conclusion === '不合规' || (result.conclusion === '疑似' && settings['处理疑似'])) && (settings['审查所有'] || /恶意推广/.test(result.msg))
       let msg = `${FromNickName}(${FromUserId})发表于${FromGroupName}(${FromGroupId})的内容不合规。原因：${result.msg}；原文：\n${Content}`
       msg += `\n处理方式：${revoke ? '撤回' : '无'}`
       let params = { toUser: REPORT_QQ, sendToType: 1, sendMsgType: 'TextMsg', content: msg, groupid: FromGroupId, atUser: 0, replayInfo: null }
@@ -100,7 +103,7 @@ async function main () {
         log.info({ resp }, '撤回恶意推广消息')
         if (resp.Ret === 1001) {
           // {"Msg":"No message meets the requirements","Ret":1001}
-          settings.whitelist.add(FromUserId)
+          settings['白名单'].add(FromUserId)
           saveSettings()
         }
       }
@@ -113,15 +116,15 @@ async function main () {
     if (FromUin !== REPORT_QQ || MsgType !== 'TextMsg') return log.debug('非文本消息或管理员消息')
     const cmd = Content.split(/\s+/)
     const cmdArr = Object.entries(COMMAND)
-    const idx = cmdArr.map(([, v]) => v.n.split(' ')[0]).findIndex(v => v === cmd[0])
+    const idx = cmdArr.map(([k]) => k).findIndex(v => v === cmd[0])
     let reply = HELP
     if (idx >= 0) {
       if (cmd[1]) {
-        cmdArr[idx][1].s(settings, cmd[1])
+        cmdArr[idx][1].set(settings, cmd[1])
         reply = `${cmd[0]} - 设定修改成功`
         saveSettings()
       } else {
-        reply = `${cmd[0]} - 当前设定值为${cmdArr[idx][1].g(settings[cmdArr[idx][0]])}`
+        reply = `${cmd[0]} - 当前设定值为${cmdArr[idx][1].get(settings[cmdArr[idx][0]])}`
       }
     }
     const params = { toUser: FromUin, sendToType: 1, sendMsgType: 'TextMsg', content: reply, groupid: 0, atUser: 0, replayInfo: null }
