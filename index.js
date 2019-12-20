@@ -26,16 +26,31 @@ const REQ_CONF = {
   timeout: 5000
 }
 
+// 如给定配置文件路径，则读取之，否则读取index.js同路径下的config.json
+const confPath = process.argv[2] || path.join(__dirname, 'config.json')
+const config = JSON.parse(fs.readFileSync(confPath, 'utf8'))
 // 设置百度AIP底层request库的一些参数，例如代理服务地址，超时时间等
 HttpClient.setRequestOptions(REQ_CONF)
-let AIP // 百度AIP内容审查引擎
+// 初始化百度内容审查引擎
+const { APP_ID, API_KEY, SECRET_KEY } = config.BAIDU
+const AIP = new Client(APP_ID, API_KEY, SECRET_KEY)
 
-// IOTQQ相关
-let rp
-let WEB_API // IOTQQ Web API地址
-let WS_API // IOTQQ Websocket接入点
-let LOGIN_QQ // 登录QQ号，即机器人QQ号
-let REPORT_QQ // 报告QQ号，撤回消息通知此QQ
+// 初始化IOTQQ相关常量
+const { WEB_API, WEB_API_AUTH, WS_API, LOGIN_QQ, REPORT_QQ } = config.IOTQQ
+// 设置IOTQQ Web API的默认请求设置
+const rpConf = { ...REQ_CONF, auth: WEB_API_AUTH, json: true }
+const rp = request.defaults(rpConf)
+
+const Authorization = WEB_API_AUTH && 'Basic ' + Buffer.from(`${WEB_API_AUTH.user}:${WEB_API_AUTH.pass}`).toString('base64')
+const opts = {
+  // reconnection: true,
+  // secure: true,
+  // rejectUnauthorized: false,
+  // agent: new (require('https-proxy-agent'))('http://localhost:8888'),
+  agent: DEBUG && new (require('proxy-agent'))('http://127.0.0.1:8888'),
+  transports: ['websocket'],
+  extraHeaders: Authorization && { Authorization }
+}
 
 // 私聊支持的配置指令，val: 默认值, type: 类型, get: 保存值->显示值, set: 输入值->保存值
 const COMMAND = {
@@ -46,23 +61,11 @@ const COMMAND = {
   文本长度: { val: 8, type: '数字', get: v => v, set: (s, v) => { s['文本长度'] = ~~v } } // 启动审查的最少字符数
 }
 // 配置初始值（默认值）
-const settings = Object.entries(COMMAND).reduce((o, [k, v]) => (o[k] = v.val, o), {})
+const settings = Object.entries(COMMAND).reduce((o, [k, v]) => (o[k] = v.val, o), {}) // eslint-disable-line
 // 帮助信息（收到不可识别的指令）
 const HELP = `命令列表：\n${Object.entries(COMMAND).map(([k, v]) => k + ' ' + v.type).join('\n')}`
 
 async function main () {
-  // 如给定配置文件路径，则读取之，否则读取index.js同路径下的config.json
-  const confPath = process.argv[2] || path.join(__dirname, 'config.json')
-  const config = JSON.parse(fs.readFileSync(confPath, 'utf8'))
-  // 初始化百度内容审查引擎
-  const { APP_ID, API_KEY, SECRET_KEY } = config.BAIDU
-  AIP = new Client(APP_ID, API_KEY, SECRET_KEY)
-  // 初始化IOTQQ相关常量
-  ;({ WEB_API, WS_API, LOGIN_QQ, REPORT_QQ } = config.IOTQQ)
-  // 设置IOTQQ Web API的默认请求设置
-  const rpConf = { ...REQ_CONF, auth: config.IOTQQ.WEB_API_AUTH, json: true }
-  rp = request.defaults(rpConf)
-
   const settingsPath = path.join(__dirname, 'settings.json')
   try { Object.assign(settings, JSON.parse(fs.readFileSync(settingsPath, 'utf8'))) } catch (err) {}
   settings['白名单'] = new Set(settings['白名单'])
@@ -74,7 +77,7 @@ async function main () {
   }
 
   // 开始连接websocket
-  const socket = io(WS_API, { transports: ['websocket'] })
+  const socket = io(WS_API, opts)
   // socket.emit('GetWebConn', '' + LOGIN_QQ, (data) => log.info(data))
   socket.on('connect', e => {
     log.info('WebSocket已连接')
@@ -101,11 +104,11 @@ async function main () {
         params = { GroupID: FromGroupId, MsgSeq, MsgRandom }
         resp = await callApi('RevokeMsg', params)
         log.info({ resp }, '撤回恶意推广消息')
-        if (resp.Ret === 1001) {
-          // {"Msg":"No message meets the requirements","Ret":1001}
-          settings['白名单'].add(FromUserId)
-          saveSettings()
-        }
+        // if (resp.Ret === 1001) {
+        //   // {"Msg":"No message meets the requirements","Ret":1001}
+        //   settings['白名单'].add(FromUserId)
+        //   saveSettings()
+        // }
       }
     }
   })
