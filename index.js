@@ -142,7 +142,7 @@ async function main () {
 
 // 调用IOTQQ WebAPI
 async function callApi (name, params) {
-  const url = `${WEB_API}/LuaApiCaller?qq=${LOGIN_QQ}&funcname=${name}&timeout=10`
+  const url = `${WEB_API.replace(/\/+$/, '')}/LuaApiCaller?qq=${LOGIN_QQ}&funcname=${name}&timeout=10`
   if (params) return rp.post(url, { body: params })
   return rp.get(url)
 }
